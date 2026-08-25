@@ -1,0 +1,8 @@
+{
+"name": "jdot-games",
+"version": "1.0.0",
+"description": "JDot Games Platform",
+"dependencies": {
+"backblaze-b2": "^1.7.0"
+}
+}
