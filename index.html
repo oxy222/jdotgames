@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>JDot Games</title>
+    
+    <!-- Tailwind CSS for sleek, minimalist styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Custom Tailwind Configuration for Console UI Vibes -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        console: {
+                            dark: '#0e0e10',
+                            base: '#18181b',
+                            card: '#27272a',
+                            accent: '#107C10', /* Xbox Green */
+                            accentHover: '#139113',
+                            switch: '#E60012'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    transitionTimingFunction: {
+                        'snap': 'cubic-bezier(0.175, 0.885, 0.32, 1.275)', // Bouncy console feel
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Icons (Phosphor Icons for a clean look) -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+
+    <!-- Custom CSS for Scrollbars and Iframe -->
+    <style>
+        body {
+            background-color: #0e0e10;
+            color: #ffffff;
+            overflow-x: hidden;
+            user-select: none; /* Prevent text selection for app-like feel */
+        }
+
+        /* Hide scrollbar for horizontal lists but keep functionality */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* Game Iframe Overlay styling */
+        #game-overlay {
+            backdrop-filter: blur(10px);
+        }
+        
+        .game-card-focus {
+            outline: 4px solid #107C10;
+            transform: scale(1.05);
+            z-index: 10;
+            box-shadow: 0 10px 25px rgba(16, 124, 16, 0.4);
+        }
+    </style>
+
+    <!-- Import Map for React and Firebase Modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+            "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+            "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+        }
+    }
+    </script>
+    
+    <!-- Babel for JSX compilation in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+    <div id="root" class="min-h-screen w-full"></div>
+
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef, useCallback } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { initializeApp } from 'firebase/app';
+        import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from 'firebase/auth';
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
+
+        // --- FIREBASE CONFIGURATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAZGd0RkWuKwHXMu0CeBA-929PKygz3CNY",
+            authDomain: "jdotgames-604ae.firebaseapp.com",
+            projectId: "jdotgames-604ae",
+            storageBucket: "jdotgames-604ae.firebasestorage.app",
+            messagingSenderId: "1018069170554",
+            appId: "1:1018069170554:web:15dc5ff8e807cf0c8f7ec3",
+            measurementId: "G-QCL0B1G6Z2"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const googleProvider = new GoogleAuthProvider();
+
+        // --- FETCH REAL DATA FROM VERCEL API ---
+        const fetchGamesFromB2 = async () => {
+            try {
+                // Call the secure Serverless function we just made
+                const response = await fetch('/api/get-games');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error("Error fetching games:", error);
+                // Fallback to empty array on failure so app doesn't crash
+                return [];
+            }
+        };
+
+        // Artwork auto-sync helper (Fallback to placeholders using RAWG/IGDB logic concepts)
+        const getArtwork = (title) => {
+            // Here you could implement a fetch to RAWG API using the game title
+            // For now, generating dynamic visually pleasing placeholders
+            const encodedTitle = encodeURIComponent(title);
+            const colors = ['107C10', 'E60012', '0052CC', 'FF9900', '6B21A8'];
+            const randomColor = colors[title.length % colors.length];
+            return `https://placehold.co/600x800/${randomColor}/FFFFFF/png?text=${encodedTitle}&font=Montserrat`;
+        };
+
+        // --- STREAMING_CHUNK:Building Core UI Components ---
+
+        // Top Navigation Bar
+        const TopBar = ({ user, onLogin, onLogout, time }) => (
+            <div className="flex justify-between items-center p-6 w-full fixed top-0 left-0 z-40 bg-gradient-to-b from-console-dark to-transparent">
+                <div className="flex items-center gap-3">
+                    <i className="ph-fill ph-game-controller text-console-accent text-4xl"></i>
+                    <h1 className="text-2xl font-bold tracking-wider">JDOT<span className="text-console-accent">GAMES</span></h1>
+                </div>
+                
+                <div className="flex items-center gap-6">
+                    <div className="text-sm font-semibold opacity-80">{time}</div>
+                    
+                    {user ? (
+                        <div className="flex items-center gap-4 bg-console-base px-4 py-2 rounded-full border border-gray-700 shadow-lg cursor-pointer hover:bg-console-card transition-colors" onClick={onLogout}>
+                            <img src={user.photoURL || `https://placehold.co/100x100/107C10/FFF?text=${user.displayName?.[0]}`} alt="Profile" className="w-8 h-8 rounded-full" />
+                            <span className="font-medium text-sm hidden md:block">{user.displayName}</span>
+                        </div>
+                    ) : (
+                        <button 
+                            onClick={onLogin}
+                            className="bg-console-accent hover:bg-console-accentHover text-white px-5 py-2 rounded-full font-bold text-sm transition-all duration-200 transform hover:scale-105 shadow-[0_0_15px_rgba(16,124,16,0.5)]"
+                        >
+                            Sign In
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+
+        // Game Card Component
+        const GameCard = ({ game, isFocused, onSelect }) => {
+            const cardRef = useRef(null);
+
+            useEffect(() => {
+                if (isFocused && cardRef.current) {
+                    // Smoothly scroll the focused item into view (Console style)
+                    cardRef.current.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'nearest',
+                        inline: 'center'
+                    });
+                }
+            }, [isFocused]);
+
+            return (
+                <div 
+                    ref={cardRef}
+                    onClick={() => onSelect(game)}
+                    className={`flex-none w-40 h-56 sm:w-48 sm:h-72 md:w-56 md:h-80 rounded-xl overflow-hidden relative cursor-pointer transition-all duration-200 ease-snap ${isFocused ? 'game-card-focus' : 'scale-100 opacity-70 hover:opacity-100'}`}
+                >
+                    <img 
+                        src={getArtwork(game.title)} 
+                        alt={game.title} 
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                    />
+                    <div className="absolute bottom-0 left-0 w-full p-4 bg-gradient-to-t from-black via-black/70 to-transparent">
+                        <h3 className="font-bold text-sm md:text-md truncate text-white drop-shadow-md">{game.title}</h3>
+                        <p className="text-xs text-gray-300 font-medium">{game.genre}</p>
+                    </div>
+                </div>
+            );
+        };
+
+        // Horizontal Row for Games
+        const GameRow = ({ title, games, rowIndex, focusedPos, onSelect }) => {
+            if (!games || games.length === 0) return null;
+            
+            const isRowActive = focusedPos.row === rowIndex;
+
+            return (
+                <div className="mb-10 w-full pl-6 md:pl-12">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                        {title}
+                        {isRowActive && <i className="ph ph-caret-right text-console-accent animate-pulse"></i>}
+                    </h2>
+                    <div className="flex gap-4 md:gap-6 overflow-x-auto hide-scrollbar py-4 pr-12 relative">
+                        {games.map((game, colIndex) => (
+                            <GameCard 
+                                key={`${rowIndex}-${game.id}`}
+                                game={game}
+                                isFocused={isRowActive && focusedPos.col === colIndex}
+                                onSelect={onSelect}
+                            />
+                        ))}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- STREAMING_CHUNK:Implementing Fullscreen Player and Logic ---
+        
+        // Game Player Modal
+        const GamePlayer = ({ game, onClose, onToggleShelf, isShelved, user }) => {
+            if (!game) return null;
+
+            // Use the actual public file URL provided by our backend API
+            const gameUrl = game.url;
+            
+            // In a real environment we want to show the iframe, 
+            // but we'll set isPreview to false here so it attempts to load your real URLs
+            const isPreview = false; 
+
+            return (
+                <div id="game-overlay" className="fixed inset-0 z-50 bg-black/90 flex flex-col">
+                    <div className="flex justify-between items-center p-4 bg-console-dark border-b border-gray-800">
+                        <div className="flex items-center gap-4">
+                            <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors bg-console-card p-2 rounded-full flex items-center gap-2">
+                                <i className="ph ph-arrow-left text-xl"></i>
+                                <span className="text-sm font-bold hidden sm:inline">Back (Esc/B)</span>
+                            </button>
+                            <h2 className="text-xl font-bold">{game.title}</h2>
+                        </div>
+                        
+                        {user && (
+                            <button 
+                                onClick={() => onToggleShelf(game)}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-full font-bold text-sm transition-colors ${isShelved ? 'bg-console-card text-console-accent border border-console-accent' : 'bg-console-card text-white hover:bg-gray-700'}`}
+                            >
+                                <i className={isShelved ? "ph-fill ph-check-circle" : "ph ph-plus"}></i>
+                                <span className="hidden sm:inline">{isShelved ? 'On Shelf' : 'Add to Shelf'}</span>
+                            </button>
+                        )}
+                    </div>
+                    
+                    <div className="flex-1 w-full bg-black relative flex items-center justify-center">
+                        {/* We use a placeholder for the actual iframe to avoid cross-origin errors in this preview, 
+                            but structurally this is how you load the B2 HTML game */}
+                        {isPreview ? (
+                            <div className="text-center">
+                                <i className="ph-duotone ph-game-controller text-7xl text-console-accent mb-4 animate-bounce"></i>
+                                <h1 className="text-3xl font-bold text-white mb-2">Playing {game.title}</h1>
+                                <p className="text-gray-400">Game loaded from Backblaze B2: <br/><code className="bg-gray-800 px-2 py-1 rounded text-xs mt-2 inline-block">{game.folder}/index.html</code></p>
+                            </div>
+                        ) : (
+                            <iframe 
+                                src={gameUrl} 
+                                className="w-full h-full border-none"
+                                title={game.title}
+                                allow="gamepad; autoplay; fullscreen"
+                            ></iframe>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // --- STREAMING_CHUNK:Main Application State and Input Loop ---
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [gamesData, setGamesData] = useState([]);
+            const [shelvedIds, setShelvedIds] = useState([]);
+            const [recentIds, setRecentIds] = useState([]);
+            
+            const [activeGame, setActiveGame] = useState(null);
+            const [timeString, setTimeString] = useState("");
+            
+            // Spatial Navigation State: Grid of rows.
+            // 0: Featured, 1: Shelf (if any), 2: Recent (if any), 3: All Games
+            const [focusedPos, setFocusedPos] = useState({ row: 0, col: 0 });
+            const [layoutMap, setLayoutMap] = useState([]);
+
+            // Gamepad ref to prevent rapid firing
+            const lastGamepadState = useRef({ up: false, down: false, left: false, right: false, a: false, b: false });
+
+            // Clock
+            useEffect(() => {
+                const updateTime = () => {
+                    const now = new Date();
+                    setTimeString(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+                };
+                updateTime();
+                const timer = setInterval(updateTime, 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            // Init Firebase Auth & Load Data
+            useEffect(() => {
+                const loadB2Games = async () => {
+                    const data = await fetchGamesFromB2();
+                    setGamesData(data);
+                };
+                loadB2Games();
+
+                const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+                    setUser(currentUser);
+                    if (currentUser) {
+                        const userRef = doc(db, 'users', currentUser.uid);
+                        const userSnap = await getDoc(userRef);
+                        if (userSnap.exists()) {
+                            const data = userSnap.data();
+                            setShelvedIds(data.shelved || []);
+                            setRecentIds(data.recent || []);
+                        } else {
+                            // Create user doc if new
+                            await setDoc(userRef, { shelved: [], recent: [] });
+                        }
+                    } else {
+                        setShelvedIds([]);
+                        setRecentIds([]);
+                    }
+                });
+                return () => unsubscribe();
+            }, []);
+
+            // Process Data into Rows
+            const featuredGames = gamesData.filter(g => g.isFeatured);
+            const allGames = gamesData.filter(g => !g.isFeatured);
+            const shelvedGames = gamesData.filter(g => shelvedIds.includes(g.id));
+            const recentGames = gamesData.filter(g => recentIds.includes(g.id));
+
+            // Dynamically build layout map for navigation
+            useEffect(() => {
+                const rows = [];
+                if (featuredGames.length > 0) rows.push({ type: 'featured', data: featuredGames });
+                if (shelvedGames.length > 0) rows.push({ type: 'shelf', data: shelvedGames });
+                if (recentGames.length > 0) rows.push({ type: 'recent', data: recentGames });
+                if (allGames.length > 0) rows.push({ type: 'all', data: allGames });
+                
+                setLayoutMap(rows);
+                
+                // Keep focus within bounds if rows change dynamically
+                setFocusedPos(prev => {
+                    let newRow = Math.min(prev.row, Math.max(0, rows.length - 1));
+                    let newCol = 0; // Reset col on major layout shift for safety
+                    if (rows[newRow] && prev.col < rows[newRow].data.length) {
+                        newCol = prev.col;
+                    }
+                    return { row: newRow, col: newCol };
+                });
+            }, [gamesData, shelvedIds, recentIds]);
+
+            // --- STREAMING_CHUNK:Keyboard and Controller Navigation Logic ---
+
+            const handleNavigate = useCallback((direction) => {
+                if (activeGame) return; // Disable background nav when playing
+
+                setFocusedPos(prev => {
+                    if (layoutMap.length === 0) return prev;
+                    let { row, col } = prev;
+                    
+                    if (direction === 'UP') {
+                        row = Math.max(0, row - 1);
+                        col = Math.min(col, layoutMap[row].data.length - 1);
+                    } else if (direction === 'DOWN') {
+                        row = Math.min(layoutMap.length - 1, row + 1);
+                        col = Math.min(col, layoutMap[row].data.length - 1);
+                    } else if (direction === 'LEFT') {
+                        col = Math.max(0, col - 1);
+                    } else if (direction === 'RIGHT') {
+                        col = Math.min(layoutMap[row].data.length - 1, col + 1);
+                    }
+                    
+                    return { row, col };
+                });
+            }, [layoutMap, activeGame]);
+
+            const handleSelectCurrent = useCallback(() => {
+                if (activeGame) return;
+                if (layoutMap.length > 0 && layoutMap[focusedPos.row] && layoutMap[focusedPos.row].data[focusedPos.col]) {
+                    handlePlayGame(layoutMap[focusedPos.row].data[focusedPos.col]);
+                }
+            }, [layoutMap, focusedPos, activeGame]);
+
+            // Keyboard Listeners
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    if (activeGame) {
+                        if (e.key === 'Escape') setActiveGame(null);
+                        return;
+                    }
+                    switch (e.key) {
+                        case 'ArrowUp': handleNavigate('UP'); break;
+                        case 'ArrowDown': handleNavigate('DOWN'); break;
+                        case 'ArrowLeft': handleNavigate('LEFT'); break;
+                        case 'ArrowRight': handleNavigate('RIGHT'); break;
+                        case 'Enter': handleSelectCurrent(); break;
+                    }
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                return () => window.removeEventListener('keydown', handleKeyDown);
+            }, [handleNavigate, handleSelectCurrent, activeGame]);
+
+            // Gamepad Polling Loop
+            useEffect(() => {
+                let animationFrameId;
+                
+                const pollGamepad = () => {
+                    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+                    const gp = gamepads[0]; // Primary controller
+                    
+                    if (gp) {
+                        const ls = lastGamepadState.current;
+                        const axes = gp.axes;
+                        const buttons = gp.buttons;
+
+                        // D-Pad or Left Stick (Up)
+                        const up = buttons[12]?.pressed || axes[1] < -0.5;
+                        if (up && !ls.up) handleNavigate('UP');
+                        ls.up = up;
+
+                        // Down
+                        const down = buttons[13]?.pressed || axes[1] > 0.5;
+                        if (down && !ls.down) handleNavigate('DOWN');
+                        ls.down = down;
+
+                        // Left
+                        const left = buttons[14]?.pressed || axes[0] < -0.5;
+                        if (left && !ls.left) handleNavigate('LEFT');
+                        ls.left = left;
+
+                        // Right
+                        const right = buttons[15]?.pressed || axes[0] > 0.5;
+                        if (right && !ls.right) handleNavigate('RIGHT');
+                        ls.right = right;
+
+                        // A Button (Select) - typically button 0
+                        const aBtn = buttons[0]?.pressed;
+                        if (aBtn && !ls.a) handleSelectCurrent();
+                        ls.a = aBtn;
+
+                        // B Button (Back/Cancel) - typically button 1
+                        const bBtn = buttons[1]?.pressed;
+                        if (bBtn && !ls.b && activeGame) setActiveGame(null);
+                        ls.b = bBtn;
+                    }
+                    
+                    animationFrameId = requestAnimationFrame(pollGamepad);
+                };
+                
+                pollGamepad();
+                return () => cancelAnimationFrame(animationFrameId);
+            }, [handleNavigate, handleSelectCurrent, activeGame]);
+
+            // --- STREAMING_CHUNK:Firebase Interactions ---
+
+            const login = async () => {
+                try {
+                    await signInWithPopup(auth, googleProvider);
+                } catch (error) {
+                    console.error("Login failed", error);
+                }
+            };
+
+            const logout = () => signOut(auth);
+
+            const handlePlayGame = async (game) => {
+                setActiveGame(game);
+                
+                if (user) {
+                    // Add to recent
+                    const newRecent = [game.id, ...recentIds.filter(id => id !== game.id)].slice(0, 10);
+                    setRecentIds(newRecent);
+                    
+                    try {
+                        const userRef = doc(db, 'users', user.uid);
+                        await updateDoc(userRef, {
+                            recent: newRecent
+                        });
+                    } catch (e) {
+                        console.error("Error saving recent", e);
+                    }
+                }
+            };
+
+            const toggleShelf = async (game) => {
+                if (!user) return;
+                
+                const isCurrentlyShelved = shelvedIds.includes(game.id);
+                const userRef = doc(db, 'users', user.uid);
+                
+                try {
+                    if (isCurrentlyShelved) {
+                        setShelvedIds(prev => prev.filter(id => id !== game.id));
+                        await updateDoc(userRef, {
+                            shelved: arrayRemove(game.id)
+                        });
+                    } else {
+                        setShelvedIds(prev => [...prev, game.id]);
+                        await updateDoc(userRef, {
+                            shelved: arrayUnion(game.id)
+                        });
+                    }
+                } catch (e) {
+                    console.error("Error updating shelf", e);
+                }
+            };
+
+            // Main Render
+            return (
+                <div className="pt-24 pb-12 min-h-screen">
+                    <TopBar user={user} onLogin={login} onLogout={logout} time={timeString} />
+                    
+                    {gamesData.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-[70vh]">
+                            <i className="ph-duotone ph-spinner-gap animate-spin text-5xl text-console-accent mb-4"></i>
+                            <p className="text-gray-400 font-medium">Booting JDot Engine...</p>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-2 relative z-10">
+                            {layoutMap.map((rowConfig, index) => {
+                                let title = "";
+                                if (rowConfig.type === 'featured') title = "Featured on Backblaze";
+                                if (rowConfig.type === 'shelf') title = "My Shelf";
+                                if (rowConfig.type === 'recent') title = "Recently Played";
+                                if (rowConfig.type === 'all') title = "All Games";
+
+                                return (
+                                    <GameRow 
+                                        key={rowConfig.type}
+                                        title={title}
+                                        games={rowConfig.data}
+                                        rowIndex={index}
+                                        focusedPos={focusedPos}
+                                        onSelect={handlePlayGame}
+                                    />
+                                );
+                            })}
+                        </div>
+                    )}
+
+                    {activeGame && (
+                        <GamePlayer 
+                            game={activeGame} 
+                            onClose={() => setActiveGame(null)} 
+                            onToggleShelf={toggleShelf}
+                            isShelved={shelvedIds.includes(activeGame.id)}
+                            user={user}
+                        />
+                    )}
+                    
+                    {/* Background Ambient Glow matching focused row */}
+                    <div className="fixed top-0 left-0 w-full h-full pointer-events-none z-0 overflow-hidden">
+                        <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-console-accent rounded-full blur-[150px] opacity-10"></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
