@@ -3,7 +3,6 @@ module.exports = async function(req, res) {
   const applicationKey = process.env.B2_APP_KEY || "K005jRUQFVU4U11vJS5hf1KmWmyrA0Y";
 
   try {
-    // 1. Authorize with v2 API
     const credentials = Buffer.from(`${keyID}:${applicationKey}`).toString('base64');
     const authRes = await fetch('https://api.backblazeb2.com/b2api/v2/b2_authorize_account', {
       method: 'GET',
@@ -22,10 +21,9 @@ module.exports = async function(req, res) {
     const bucketId = authData.allowed.bucketId;
 
     if (!bucketId) {
-      return res.status(500).json({ success: false, error: 'No bucket ID found. Make sure this is an Application Key restricted to one bucket, not a Master Key.' });
+      return res.status(500).json({ success: false, error: 'No bucket ID found.' });
     }
 
-    // 2. List all file names with v2 API
     const listRes = await fetch(`${apiUrl}/b2api/v2/b2_list_file_names`, {
       method: 'POST',
       headers: { 
@@ -46,45 +44,49 @@ module.exports = async function(req, res) {
     const listData = await listRes.json();
     const files = listData.files || [];
 
-    // 3. Process files
-    const games = files
-      .filter(file => file.action === 'upload' && file.fileName.endsWith('.html'))
-      .map(file => {
-        const pathParts = file.fileName.split('/');
-        const isFeatured = file.fileName.startsWith('featured/') || pathParts.includes('featured');
-        const fileNameWithoutExt = pathParts[pathParts.length - 1].replace('.html', '');
-        
-        const title = fileNameWithoutExt
-          .split(/[-_]/)
-          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-          .join(' ');
+    const htmlFiles = files.filter(file => file.action === 'upload' && file.fileName.endsWith('.html'));
 
-        const gameUrl = `${downloadUrl}/file/${authData.allowed.bucketName}/${file.fileName}`;
-        
-        const matchingArt = files.find(f => 
-          f.fileName.includes('artwork/') && 
-          f.fileName.toLowerCase().includes(fileNameWithoutExt.toLowerCase())
-        );
-        
-        const artworkUrl = matchingArt 
-          ? `${downloadUrl}/file/${authData.allowed.bucketName}/${matchingArt.fileName}`
-          : `https://images.unsplash.com/photo-1550745165-9bc0b252726f?w=600&auto=format&fit=crop&q=80`;
+    const gamesPromises = htmlFiles.map(async file => {
+      const pathParts = file.fileName.split('/');
+      const isFeatured = file.fileName.startsWith('featured/') || pathParts.includes('featured');
+      const fileNameWithoutExt = pathParts[pathParts.length - 1].replace('.html', '');
+      
+      const title = fileNameWithoutExt
+        .split(/[-_]/)
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+        .join(' ');
 
-        return {
-          id: file.fileId,
-          title: title,
-          fileName: file.fileName,
-          url: gameUrl,
-          featured: isFeatured,
-          cover: artworkUrl,
-          category: isFeatured ? 'Featured' : (pathParts.length > 1 ? pathParts[0] : 'Arcade')
-        };
-      });
+      const gameUrl = `${downloadUrl}/file/${authData.allowed.bucketName}/${file.fileName}`;
+      
+      let coverUrl = `https://placehold.co/600x900/1f2937/ffffff?text=${encodeURIComponent(title)}&font=Montserrat`;
+
+      try {
+        const itunesRes = await fetch(`https://itunes.apple.com/search?term=${encodeURIComponent(title)}&entity=software&limit=1`);
+        if (itunesRes.ok) {
+          const itunesData = await itunesRes.json();
+          if (itunesData.results && itunesData.results.length > 0) {
+            coverUrl = itunesData.results[0].artworkUrl512;
+          }
+        }
+      } catch (e) {
+      }
+
+      return {
+        id: file.fileId,
+        title: title,
+        fileName: file.fileName,
+        url: gameUrl,
+        featured: isFeatured,
+        cover: coverUrl,
+        category: isFeatured ? 'Featured' : (pathParts.length > 1 ? pathParts[0] : 'Arcade')
+      };
+    });
+
+    const games = await Promise.all(gamesPromises);
 
     return res.status(200).json({ success: true, games });
 
   } catch (error) {
-    console.error('Server Error:', error);
     return res.status(500).json({ success: false, error: error.toString() });
   }
 }
