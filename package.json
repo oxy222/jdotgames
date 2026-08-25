@@ -1,8 +1,13 @@
 {
-"name": "jdot-games",
-"version": "1.0.0",
-"description": "JDot Games Platform",
-"dependencies": {
-"backblaze-b2": "^1.7.0"
-}
+  "name": "jdot-games",
+  "version": "1.0.0",
+  "description": "Xbox Cloud Play style webapp for Backblaze B2 HTML games",
+  "main": "index.html",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=18.x"
+  }
 }
